@@ -1,4 +1,8 @@
-// @name 盘搜模板
+// @name 盘搜
+// @author 
+// @description 刮削：支持，弹幕：支持，嗅探：支持
+// @version 1.0.0
+// @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/网盘/盘搜.js
 /**
  * OmniBox 网盘爬虫脚本
  *
@@ -60,6 +64,11 @@ const PANCHECK_ENABLED = true;
 // 例如：baidu,aliyun,quark,115,tianyi,xunlei,123,mobile,uc
 // 如果不配置，则检测所有平台
 const PANCHECK_PLATFORMS = process.env.PANCHECK_PLATFORMS || "";
+
+// 网盘类型匹配配置: 使用分号分隔，例如 quark;uc
+const DRIVE_TYPE_CONFIG = (process.env.DRIVE_TYPE_CONFIG || "quark;uc").split(';').map((t) => t.trim()).filter(Boolean);
+// 线路名称配置: 使用分号分隔，例如 本地代理;服务端代理;直连
+const SOURCE_NAMES_CONFIG = (process.env.SOURCE_NAMES_CONFIG || "本地代理;服务端代理;直连").split(';').map((s) => s.trim()).filter(Boolean);
 
 // ==================== 配置区域结束 ====================
 
@@ -736,6 +745,141 @@ function buildScrapedFileName(scrapeData, mapping, originalFileName) {
   return originalFileName;
 }
 
+function encodePlayMeta(meta) {
+  try {
+    return Buffer.from(JSON.stringify(meta || {}), "utf8").toString("base64");
+  } catch (error) {
+    return "";
+  }
+}
+
+function decodePlayMeta(meta) {
+  try {
+    const raw = Buffer.from(String(meta || ""), "base64").toString("utf8");
+    return JSON.parse(raw || "{}");
+  } catch (error) {
+    return {};
+  }
+}
+
+function parseVodIdForFallback(vodId) {
+  const result = {
+    title: "",
+    episodeName: "",
+  };
+
+  if (!vodId) {
+    return result;
+  }
+
+  const parts = String(vodId).split("|");
+  if (parts.length >= 2) {
+    result.title = parts[2] || parts[1] || "";
+  }
+
+  return result;
+}
+
+function normalizeEpisodeName(episodeName) {
+  if (!episodeName) {
+    return "";
+  }
+
+  let name = String(episodeName).trim();
+  name = name.replace(/^[\s\uFEFF\u200B]+/g, "");
+  name = name.replace(/^[\[\(【{]?\s*(?:uc|quark|aliyun|baidu|115|tianyi|xunlei|123|mobile)\b\s*[\]\)】}]?[\s._-]*/i, "");
+  name = name.replace(/^(?:uc|quark|aliyun|baidu|115|tianyi|xunlei|123|mobile)\b[\s._-]*/i, "");
+  return name;
+}
+
+function preprocessTitleForDanmu(title) {
+  if (!title) {
+    return "";
+  }
+  return title
+    .replace(/4[kK]|[xX]26[45]|720[pP]|1080[pP]|2160[pP]/g, " ")
+    .replace(/[hH]\.?26[45]/g, " ")
+    .replace(/BluRay|WEB-DL|HDR|REMUX/gi, " ")
+    .replace(/\.mp4|\.mkv|\.avi|\.flv/gi, " ");
+}
+
+/**
+ * 预处理标题，去掉常见干扰项
+ */
+function preprocessTitle(title) {
+  if (!title) return "";
+  return title
+    .replace(/4[kK]|[xX]26[45]|720[pP]|1080[pP]|2160[pP]|1280x720|1920x1080/g, " ")
+    .replace(/[hH]\.?26[45]/g, " ")
+    .replace(/BluRay|WEB-DL|HDR|REMUX/gi, " ")
+    .replace(/\.mp4|\.mkv|\.avi|\.flv/gi, " ");
+}
+
+function extractEpisode(title) {
+  if (!title) return "";
+
+  const processedTitle = preprocessTitle(title).trim();
+
+  // 1. S01E03 格式
+  const seMatch = processedTitle.match(/[Ss](?:\d{1,2})?[-._\s]*[Ee](\d{1,3})/i);
+  if (seMatch) return seMatch[1];
+
+  // 2. 中文格式：第XX集/话
+  const cnMatch = processedTitle.match(/第\s*([零一二三四五六七八九十0-9]+)\s*[集话章节回期]/);
+  if (cnMatch) return String(chineseToArabic(cnMatch[1]));
+
+  // 3. EP/E 格式
+  const epMatch = processedTitle.match(/\b(?:EP|E)[-._\s]*(\d{1,3})\b/i);
+  if (epMatch) return epMatch[1];
+
+  // 4. 括号格式 [03]
+  const bracketMatch = processedTitle.match(/[\[\(【（](\d{1,3})[\]\)】）]/);
+  if (bracketMatch) {
+    const num = bracketMatch[1];
+    // 排除常见分辨率
+    if (!["720", "1080", "480"].includes(num)) return num;
+  }
+
+  // 5. 独立的数字 (排除常见的视频参数)
+  const standaloneMatches = processedTitle.match(/(?:^|[\s\-\._\[\]])(\d{1,3})(?![0-9pP])/g);
+  if (standaloneMatches) {
+    const candidates = standaloneMatches
+      .map(m => m.match(/\d+/)[0])
+      .filter(num => {
+        const n = parseInt(num);
+        return n > 0 && n < 300 && !["720", "480", "264", "265"].includes(num);
+      });
+    
+    if (candidates.length > 0) {
+      // 优先取 1-99 之间的
+      const normalEp = candidates.find(n => parseInt(n) < 100);
+      return normalEp || candidates[0];
+    }
+  }
+
+  return "";
+}
+
+function buildFileNameForDanmu(vodName, episodeTitle) {
+  if (!vodName) {
+    return "";
+  }
+
+  if (!episodeTitle || episodeTitle === "正片" || episodeTitle === "播放") {
+    return vodName;
+  }
+
+  const digits = extractEpisode(episodeTitle);
+  if (digits) {
+    const epNum = parseInt(digits, 10);
+    if (epNum > 0) {
+      return epNum < 10 ? `${vodName} S01E0${epNum}` : `${vodName} S01E${epNum}`;
+    }
+  }
+
+  return vodName;
+}
+
 /**
  * 详情
  * @param {Object} params - 参数对象
@@ -849,18 +993,23 @@ async function detail(params) {
       }
     }
 
+    const displayNameFromFileList = fileList.displayName || fileList.display_name || "";
+
     // 构建结构化播放源
     const playSources = [];
 
     // 确定播放源列表
-    let sourceNames = [videoId]; // 默认使用 videoId
-    if (driveInfo.driveType === "quark" || driveInfo.driveType === "uc") {
-      sourceNames = ["服务端代理", "本地代理", "直连"];
+    let sourceNames = [videoId];
+    const targetDriveTypes = DRIVE_TYPE_CONFIG;
+    const configSourceNames = SOURCE_NAMES_CONFIG;
 
-      // 如果来源是网页端，过滤掉"本地代理"线路
+    if (targetDriveTypes.includes(driveInfo.driveType)) {
+      sourceNames = [...configSourceNames];
+      OmniBox.log("info", `${displayName} 匹配 DRIVE_TYPE_CONFIG，线路设置为: ${sourceNames.join(", ")}`);
+
       if (source === "web") {
         sourceNames = sourceNames.filter((name) => name !== "本地代理");
-        OmniBox.log("info", `来源为网页端，已过滤掉"本地代理"线路`);
+        OmniBox.log("info", "来源为网页端，已过滤掉\"本地代理\"线路");
       }
     }
 
@@ -872,6 +1021,9 @@ async function detail(params) {
         let fileName = file.file_name || "";
         const fileId = file.fid || "";
         const fileSize = file.size || file.file_size || 0;
+
+        const originalFileName = file.file_name || "";
+        const originalVodName = note || keyword || displayNameFromFileList || shareURL;
 
         // 构建用于匹配映射关系的文件ID格式：{shareURL}|${fileId}
         const formattedFileId = fileId ? `${shareURL}|${fileId}` : "";
@@ -893,19 +1045,27 @@ async function detail(params) {
           }
         }
 
+        const normalizedOriginalEpisodeName = normalizeEpisodeName(originalFileName || fileName);
+        const playMeta = encodePlayMeta({
+          t: originalVodName,
+          e: normalizedOriginalEpisodeName,
+        });
+        const basePlayId = fileId ? `${shareURL}|${fileId}` : "";
+
         // 构建剧集对象
         const episode = {
           name: fileName,
-          playId: fileId ? `${shareURL}|${fileId}` : "",
+          playId: playMeta ? `${basePlayId}|${playMeta}` : basePlayId,
           size: fileSize > 0 ? fileSize : undefined,
+          rawName: originalFileName,
         };
 
         // 如果匹配到映射关系，填充TMDB信息
-        if (matchedMapping) {
-          // 保存排序用的字段（用于后续排序）
-          if (matchedMapping.seasonNumber !== undefined && matchedMapping.seasonNumber !== null) {
-            episode._seasonNumber = matchedMapping.seasonNumber;
-          }
+          if (matchedMapping) {
+            // 保存排序用的字段（用于后续排序）
+            if (matchedMapping.seasonNumber !== undefined && matchedMapping.seasonNumber !== null) {
+              episode._seasonNumber = matchedMapping.seasonNumber;
+            }
           if (matchedMapping.episodeNumber !== undefined && matchedMapping.episodeNumber !== null) {
             episode._episodeNumber = matchedMapping.episodeNumber;
           }
@@ -925,15 +1085,20 @@ async function detail(params) {
           if (matchedMapping.episodeVoteAverage !== undefined && matchedMapping.episodeVoteAverage !== null) {
             episode.episodeVoteAverage = matchedMapping.episodeVoteAverage;
           }
-          if (matchedMapping.episodeRuntime !== undefined && matchedMapping.episodeRuntime !== null) {
-            episode.episodeRuntime = matchedMapping.episodeRuntime;
+            if (matchedMapping.episodeRuntime !== undefined && matchedMapping.episodeRuntime !== null) {
+              episode.episodeRuntime = matchedMapping.episodeRuntime;
+            }
+          }
+
+          // 弹幕兜底: 保留未刮削前的原始文件名
+          if (!episode.episodeName) {
+            episode.episodeName = normalizedOriginalEpisodeName || originalFileName || fileName;
+          }
+
+          if (episode.name && episode.playId) {
+            episodes.push(episode);
           }
         }
-
-        if (episode.name && episode.playId) {
-          episodes.push(episode);
-        }
-      }
 
       // 如果刮削成功且有刮削数据，按照 episodeNumber 排序
       if (scrapeData && episodes.length > 0) {
@@ -961,16 +1126,20 @@ async function detail(params) {
         }
       }
 
-      if (episodes.length > 0) {
-        playSources.push({
-          name: sourceName,
-          episodes: episodes,
-        });
-      }
+        if (episodes.length > 0) {
+          let finalSourceName = sourceName;
+          if (targetDriveTypes.includes(driveInfo.driveType)) {
+            finalSourceName = `${displayName}-${sourceName}`;
+          }
+
+          playSources.push({
+            name: finalSourceName,
+            episodes: episodes,
+          });
+        }
     }
 
     // 构建视频详情
-    const displayNameFromFileList = fileList.displayName || fileList.display_name || "";
     let vodName = displayNameFromFileList || note || keyword || shareURL;
     let vodPic = "";
     let vodYear = "";
@@ -1070,17 +1239,41 @@ async function play(params) {
     // 获取来源参数（可选），从detail接口传递过来
     const source = params.source || "";
 
+    OmniBox.log(
+      "info",
+      `播放参数: playId=${playId || ""}, vodId=${params.vodId || ""}, title=${params.title || ""}, episodeName=${params.episodeName || ""}`
+    );
+
     if (!playId) {
       throw new Error("播放参数不能为空");
     }
 
-    // 解析playId：格式为 分享链接|文件ID
-    const parts = playId.split("|");
+    // 解析playId：格式为 分享链接|文件ID|meta(base64) 或 分享链接|文件ID|||meta(base64)
+    let mainPlayId = playId;
+    let metaPart = "";
+    if (playId.includes("|||")) {
+      const splitParts = playId.split("|||");
+      mainPlayId = splitParts[0] || "";
+      metaPart = splitParts[1] || "";
+    }
+
+    const parts = mainPlayId.split("|");
     if (parts.length < 2) {
       throw new Error("播放参数格式错误，应为：分享链接|文件ID");
     }
     const shareURL = parts[0] || "";
     const fileId = parts[1] || "";
+    if (!metaPart && parts.length > 2) {
+      metaPart = parts.slice(2).join("|");
+    }
+
+    const playMeta = decodePlayMeta(metaPart);
+    const originalTitle = playMeta.t || playMeta.v || playMeta.title || "";
+    const originalEpisodeName = playMeta.e || playMeta.episodeName || "";
+    OmniBox.log(
+      "info",
+      `透传信息: title=${originalTitle || ""}, episode=${originalEpisodeName || ""}, meta=${metaPart ? "yes" : "no"}`
+    );
 
     if (!shareURL || !fileId) {
       throw new Error("分享链接或文件ID不能为空");
@@ -1157,17 +1350,49 @@ async function play(params) {
         } else {
           OmniBox.log("info", `未找到文件映射，fileId: ${fileId}`);
         }
-      } else {
-        OmniBox.log("info", "未找到刮削元数据，跳过弹幕匹配");
-      }
+        } else {
+          OmniBox.log("info", "未找到刮削元数据，改用原始名称兜底弹幕匹配");
+        }
     } catch (error) {
       OmniBox.log("warn", `弹幕匹配失败: ${error.message}`);
       // 弹幕匹配失败不影响播放，继续执行
     }
 
-    // 使用SDK获取播放信息（自动获取stoken和fid_token，flag参数用于处理URL前缀）
-    // 对于夸克和UC网盘，如果flag是"服务端代理"或"本地代理"，后端会自动添加前缀
-    const playInfo = await OmniBox.getDriveVideoPlayInfo(shareURL, fileId, flag);
+    // 刮削失败或无结果时，依然进行弹幕匹配，使用原始剧名/集名兜底
+    if (!danmakuList || danmakuList.length === 0) {
+      const fallbackFromVodId = parseVodIdForFallback(params.vodId || "");
+      const rawFallbackEpisodeName =
+        originalEpisodeName || episodeName || params.episodeName || fallbackFromVodId.episodeName || "";
+      const fallbackEpisodeName = normalizeEpisodeName(rawFallbackEpisodeName);
+      const fallbackTitle = originalTitle || params.title || scrapeTitle || fallbackFromVodId.title || "";
+      OmniBox.log(
+        "info",
+        `兜底来源: episodeRaw=${rawFallbackEpisodeName || ""}, episodeClean=${fallbackEpisodeName || ""}, title=${fallbackTitle || ""}`
+      );
+      const fallbackFileName = buildFileNameForDanmu(fallbackTitle, fallbackEpisodeName) || fallbackTitle || fallbackEpisodeName;
+      if (fallbackFileName) {
+        try {
+          OmniBox.log("info", `使用兜底文件名进行弹幕匹配: ${fallbackFileName}`);
+          danmakuList = await OmniBox.getDanmakuByFileName(fallbackFileName);
+          OmniBox.log("info", `兜底弹幕匹配结果数量: ${danmakuList?.length || 0}`);
+        } catch (error) {
+          OmniBox.log("warn", `兜底弹幕匹配失败: ${error.message}`);
+        }
+      }
+    }
+
+    // 线路解析: 默认网页端走服务端代理，其它直连；若 flag 含前缀，取最后一段
+    let routeType = source === "web" ? "服务端代理" : "直连";
+    if (flag) {
+      if (flag.includes("-")) {
+        const parts = flag.split("-");
+        routeType = parts[parts.length - 1];
+      } else {
+        routeType = flag;
+      }
+    }
+
+    const playInfo = await OmniBox.getDriveVideoPlayInfo(shareURL, fileId, routeType);
 
     if (!playInfo || !playInfo.url || !Array.isArray(playInfo.url) || playInfo.url.length === 0) {
       throw new Error("无法获取播放地址");
