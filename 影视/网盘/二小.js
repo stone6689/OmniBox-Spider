@@ -25,7 +25,7 @@ const fs = require("fs");
 
 // ==================== 配置区域 ====================
 // 网站地址(可以通过环境变量配置,支持多个域名用;分割)
-const WEB_SITE_CONFIG = process.env.WEB_SITE_ERXIAO || "https://www.2xiaopan.top;https://www.erixaopan.fun;https://2xiaopan.top;https://www.wexwp.cc;";
+const WEB_SITE_CONFIG = process.env.WEB_SITE_MUOU || "https://www.2xiaopan.top;https://www.erixaopan.fun;https://2xiaopan.top;https://www.wexwp.cc;";
 const WEB_SITES = WEB_SITE_CONFIG.split(';').map(url => url.trim()).filter(url => url);
 // 读取环境变量:支持多个网盘类型,用分号分割
 const DRIVE_TYPE_CONFIG = (process.env.DRIVE_TYPE_CONFIG || "quark;uc").split(';').map(t => t.trim()).filter(t => t);
@@ -2099,7 +2099,7 @@ async function home(params) {
 
         OmniBox.log("info", `从首页导航提取到 ${classes.length} 个分类`);
 
-        const firstModule = $(".module").first();
+        const firstModule = $(".module");
 
         if (firstModule.length > 0) {
           const moduleItems = firstModule.find(".module-item");
