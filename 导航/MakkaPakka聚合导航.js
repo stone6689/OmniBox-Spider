@@ -3,7 +3,7 @@
 // @description 基于 AstrBot Widget 通用桥接的 OmniBox 导航源，动态读取远端 Widget Metadata 与模块函数
 // @indexs 1
 // @version 1.0.3
-// @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/综合/导航/MakkaPakka聚合导航.js
+// @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/导航/MakkaPakka聚合导航.js
 
 const OmniBox = require("omnibox_sdk");
 const runner = require("spider_runner");
