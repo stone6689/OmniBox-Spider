@@ -2,7 +2,7 @@
 // @author 梦
 // @description 刮削：已接入，弹幕：未接入，嗅探：直接返回 play.modujx11.com 直链
 // @dependencies cheerio
-// @version 1.0.5
+// @version 1.0.6
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/openclaw/影视/采集/威尔伯TV.js
 
 const OmniBox = require("omnibox_sdk");
@@ -32,43 +32,106 @@ const HOME_SECTION_MARKERS = {
   variety: 'href":"/video/variety"',
 };
 
+const COMMON_LANG_FILTER = { key: "lang", name: "按语言", init: "", value: [
+  { name: "全部", value: "" },
+  { name: "国语", value: "1" },
+  { name: "粤语", value: "2" },
+  { name: "英语", value: "3" },
+  { name: "韩语", value: "4" },
+  { name: "日语", value: "5" },
+  { name: "西班牙语", value: "6" },
+  { name: "法语", value: "7" },
+  { name: "意大利语", value: "8" },
+  { name: "泰国", value: "9" },
+  { name: "其他", value: "10" },
+] };
+
+const COMMON_AREA_FILTER = { key: "area", name: "按地区", init: "", value: [
+  { name: "全部", value: "" },
+  { name: "大陆", value: "1" },
+  { name: "香港", value: "2" },
+  { name: "台湾", value: "3" },
+  { name: "日本", value: "4" },
+  { name: "韩国", value: "5" },
+  { name: "欧美", value: "6" },
+  { name: "英国", value: "7" },
+  { name: "泰国", value: "8" },
+  { name: "其他", value: "9" },
+] };
+
+const COMMON_YEAR_FILTER = { key: "year", name: "按年份", init: "", value: [
+  { name: "全部", value: "" },
+  { name: "今年", value: "this-year" },
+  { name: "去年", value: "last-year" },
+  { name: "更早", value: "earlier" },
+] };
+
+const COMMON_ORDER_FILTER = { key: "order", name: "排序", init: "created-at", value: [
+  { name: "按时间", value: "created-at" },
+  { name: "按人气", value: "most-view" },
+] };
+
 const FILTERS = {
-  movie: [{ key: "type", name: "按类型", init: "", value: [
-    { name: "全部", value: "" },
-    { name: "喜剧", value: "5" },
-    { name: "爱情", value: "6" },
-    { name: "动作", value: "7" },
-    { name: "犯罪", value: "8" },
-    { name: "科幻", value: "9" },
-    { name: "灾难", value: "11" },
-    { name: "恐怖", value: "12" },
-    { name: "剧情", value: "13" },
-    { name: "战争", value: "14" },
-    { name: "悬疑", value: "15" },
-    { name: "动画", value: "16" },
-    { name: "其他", value: "28" },
-  ] }],
-  tv: [{ key: "type", name: "按类型", init: "", value: [
-    { name: "全部", value: "" },
-    { name: "国产剧", value: "17" },
-    { name: "港台剧", value: "18" },
-    { name: "日韩剧", value: "19" },
-    { name: "欧美剧", value: "20" },
-    { name: "其他剧", value: "21" },
-  ] }],
-  anime: [{ key: "type", name: "按类型", init: "", value: [
-    { name: "全部", value: "" },
-    { name: "国产动漫", value: "22" },
-    { name: "日本动漫", value: "23" },
-    { name: "欧美动漫", value: "29" },
-  ] }],
-  variety: [{ key: "type", name: "按类型", init: "", value: [
-    { name: "全部", value: "" },
-    { name: "国产综艺", value: "24" },
-    { name: "港台综艺", value: "25" },
-    { name: "日韩综艺", value: "26" },
-    { name: "欧美综艺", value: "27" },
-  ] }],
+  movie: [
+    { key: "type", name: "按类型", init: "", value: [
+      { name: "全部", value: "" },
+      { name: "喜剧", value: "5" },
+      { name: "爱情", value: "6" },
+      { name: "动作", value: "7" },
+      { name: "犯罪", value: "8" },
+      { name: "科幻", value: "9" },
+      { name: "灾难", value: "11" },
+      { name: "恐怖", value: "12" },
+      { name: "剧情", value: "13" },
+      { name: "战争", value: "14" },
+      { name: "悬疑", value: "15" },
+      { name: "动画", value: "16" },
+      { name: "其他", value: "28" },
+    ] },
+    COMMON_LANG_FILTER,
+    COMMON_AREA_FILTER,
+    COMMON_YEAR_FILTER,
+    COMMON_ORDER_FILTER,
+  ],
+  tv: [
+    { key: "type", name: "按类型", init: "", value: [
+      { name: "全部", value: "" },
+      { name: "国产剧", value: "17" },
+      { name: "港台剧", value: "18" },
+      { name: "日韩剧", value: "19" },
+      { name: "欧美剧", value: "20" },
+      { name: "其他剧", value: "21" },
+    ] },
+    COMMON_LANG_FILTER,
+    COMMON_AREA_FILTER,
+    COMMON_YEAR_FILTER,
+    COMMON_ORDER_FILTER,
+  ],
+  anime: [
+    { key: "type", name: "按类型", init: "", value: [
+      { name: "全部", value: "" },
+      { name: "国产动漫", value: "22" },
+      { name: "日本动漫", value: "23" },
+      { name: "欧美动漫", value: "29" },
+    ] },
+    COMMON_LANG_FILTER,
+    COMMON_AREA_FILTER,
+    COMMON_YEAR_FILTER,
+    COMMON_ORDER_FILTER,
+  ],
+  variety: [
+    { key: "type", name: "按类型", init: "", value: [
+      { name: "全部", value: "" },
+      { name: "国产综艺", value: "24" },
+      { name: "港台综艺", value: "25" },
+      { name: "日韩综艺", value: "26" },
+      { name: "欧美综艺", value: "27" },
+    ] },
+    COMMON_LANG_FILTER,
+    COMMON_AREA_FILTER,
+    COMMON_YEAR_FILTER,
+    COMMON_ORDER_FILTER,
+  ],
 };
 
 function buildFilters() {
