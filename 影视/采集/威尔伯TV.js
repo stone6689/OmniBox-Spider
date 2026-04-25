@@ -2,7 +2,7 @@
 // @author 梦
 // @description 刮削：已接入，弹幕：未接入，嗅探：直接返回 play.modujx11.com 直链
 // @dependencies cheerio
-// @version 1.0.2
+// @version 1.0.3
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/openclaw/影视/采集/威尔伯TV.js
 
 const OmniBox = require("omnibox_sdk");
@@ -183,8 +183,25 @@ async function home(params, context) {
   await log("info", "home 开始", { params: params || {}, from: context?.from || "web" });
   try {
     const html = await fetchText(`${HOST}/`);
-    await log("info", "home 抓取完成", { htmlLength: html.length, rawVodNameCount: (html.match(/vodName/g) || []).length, rawUrlPrefixCount: (html.match(/urlPrefix/g) || []).length });
-    const list = extractCarouselList(html);
+    const rawVodNameCount = (html.match(/vodName/g) || []).length;
+    const rawUrlPrefixCount = (html.match(/urlPrefix/g) || []).length;
+    const firstVodNameIdx = html.indexOf("vodName");
+    await log("info", "home 抓取完成", { htmlLength: html.length, rawVodNameCount, rawUrlPrefixCount, firstVodNameIdx, firstVodNameSnippet: firstVodNameIdx >= 0 ? html.slice(Math.max(0, firstVodNameIdx - 80), firstVodNameIdx + 220) : "" });
+    let list = extractCarouselList(html);
+    if (!list.length) {
+      const merged = [];
+      const seen = new Set();
+      for (const item of CATEGORY_MAP) {
+        const sectionList = extractSectionList(html, item.type_id);
+        await log("info", "home 分区解析", { typeId: item.type_id, count: sectionList.length, first: sectionList[0] || null });
+        for (const vod of sectionList) {
+          if (!vod?.vod_id || seen.has(vod.vod_id)) continue;
+          seen.add(vod.vod_id);
+          merged.push(vod);
+        }
+      }
+      list = merged.slice(0, 24);
+    }
     await log("info", "home 解析完成", { listCount: list.length, first: list[0] || null });
     return { class: CATEGORY_MAP, filters: {}, list };
   } catch (e) {
@@ -264,7 +281,9 @@ async function search(params, context) {
     const page = Math.max(1, parseInt(params.page || 1, 10));
     if (!keyword) return { page, pagecount: 0, total: 0, list: [] };
     const html = await fetchText(`${HOST}/search?wd=${encodeURIComponent(keyword)}`);
-    await log("info", "search 请求后", { keyword, page, htmlLength: html.length, rawVodNameCount: (html.match(/vodName/g) || []).length });
+    const rawVodNameCount = (html.match(/vodName/g) || []).length;
+    const idx = html.indexOf(keyword);
+    await log("info", "search 请求后", { keyword, page, htmlLength: html.length, rawVodNameCount, keywordIndex: idx, keywordSnippet: idx >= 0 ? html.slice(Math.max(0, idx - 80), idx + 220) : "" });
     const list = extractSectionList(html, "movie");
     await log("info", "search 解析结果", { keyword, page, listCount: list.length, first: list[0] || null });
     return { page, pagecount: page + (list.length >= 12 ? 1 : 0), total: list.length, list };
