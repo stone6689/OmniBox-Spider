@@ -2,14 +2,14 @@
 // @author 梦
 // @description 页面解析：已接入；播放：解析页面 /api/m3u8 并跟随到最终可播 m3u8
 // @dependencies cheerio
-// @version 1.0.4
+// @version 1.0.5
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/采集/电影人生.js
 
 const OmniBox = require("omnibox_sdk");
 const runner = require("spider_runner");
 const cheerio = require("cheerio");
 
-const BASE_URL = "https://dyrsok.com";
+const BASE_URL = "https://www.dyrsok.com";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
 
 module.exports = { home, category, detail, search, play };
