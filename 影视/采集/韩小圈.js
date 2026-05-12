@@ -2,7 +2,7 @@
 // @author 梦
 // @description 影视站：支持首页、分类、详情、搜索与播放
 // @dependencies cheerio
-// @version 1.0.2
+// @version 1.0.3
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/采集/韩小圈.js
 
 const OmniBox = require("omnibox_sdk");
@@ -13,6 +13,8 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const LIST_CACHE_TTL = Number(process.env.HXQ_LIST_CACHE_TTL || 900);
 const DETAIL_CACHE_TTL = Number(process.env.HXQ_DETAIL_CACHE_TTL || 1800);
 const SEARCH_CACHE_TTL = Number(process.env.HXQ_SEARCH_CACHE_TTL || 600);
+const SEARCH_PAGE_SIZE = 20;
+const SEARCH_PREFETCH_PAGES = Math.min(5, Math.max(1, Number(process.env.HXQ_SEARCH_PREFETCH_PAGES || 3) || 3));
 
 const CATEGORY_CONFIG = [
   { id: "0", name: "韩剧" },
@@ -98,25 +100,140 @@ function normalizeSearchKey(value) {
   return String(value || "")
     .toLowerCase()
     .replace(/\s+/g, "")
-    .replace(/[·•・\-—_:：,，.。'"“”‘’!?！？()（）\[\]【】]/g, "");
+    .replace(/[·•・\-—_:：,，.。'"“”‘’!?！？()（）\[\]【】《》<>]/g, "");
+}
+
+function buildSearchTokens(keyword) {
+  const base = normalizeSearchKey(keyword);
+  if (!base) return [];
+  const tokens = new Set([base]);
+  const cleaned = base.replace(/线上看|線上看|全集|韩剧|韓劇|韩国|韓國|电视剧|電視劇|连续剧|連續劇|电影|電影|动漫|動漫|动画|動畫|综艺|綜藝|中字|字幕|高清|hd/g, "");
+  if (cleaned) tokens.add(cleaned);
+  const noYear = cleaned.replace(/(19|20)\d{2}/g, "");
+  if (noYear) tokens.add(noYear);
+  const noSeason = cleaned.replace(/第?\d+[季部集]$/g, "").replace(/\d+$/g, "");
+  if (noSeason) tokens.add(noSeason);
+  return [...tokens].filter(Boolean).sort((a, b) => b.length - a.length);
+}
+
+function longestCommonSubsequenceLength(a, b) {
+  const left = String(a || "");
+  const right = String(b || "");
+  if (!left || !right) return 0;
+  const previous = new Array(right.length + 1).fill(0);
+  const current = new Array(right.length + 1).fill(0);
+  for (let i = 1; i <= left.length; i += 1) {
+    for (let j = 1; j <= right.length; j += 1) {
+      current[j] = left[i - 1] === right[j - 1]
+        ? previous[j - 1] + 1
+        : Math.max(previous[j], current[j - 1]);
+    }
+    for (let j = 0; j <= right.length; j += 1) {
+      previous[j] = current[j];
+      current[j] = 0;
+    }
+  }
+  return previous[right.length];
+}
+
+function scoreTitleToken(title, token) {
+  if (!title || !token) return 0;
+  if (title === token) return 10000 + token.length;
+  if (title.startsWith(token)) return 8500 + token.length * 10 - title.length;
+  const index = title.indexOf(token);
+  if (index >= 0) return 7000 + token.length * 10 - index;
+
+  if (token.length < 3) return 0;
+  const lcs = longestCommonSubsequenceLength(title, token);
+  const coverage = lcs / token.length;
+  const minCoverage = token.length <= 4 ? 0.75 : 0.68;
+  if (coverage < minCoverage) return 0;
+  return 4500 + Math.round(coverage * 1000) - Math.min(title.length, 100);
+}
+
+function scoreContainsToken(value, token, baseScore) {
+  if (!value || !token) return 0;
+  if (value === token) return baseScore + token.length;
+  const index = value.indexOf(token);
+  if (index < 0) return 0;
+  return baseScore - Math.min(index, 300);
 }
 
 function scoreSearchItem(item, keyword) {
-  const q = normalizeSearchKey(keyword);
+  const tokens = buildSearchTokens(keyword);
   const name = normalizeSearchKey(item?.vod_name || "");
   const remarks = normalizeSearchKey(item?.vod_remarks || "");
   const actor = normalizeSearchKey(item?.vod_actor || "");
   const director = normalizeSearchKey(item?.vod_director || "");
   const content = normalizeSearchKey(item?.vod_content || "");
-  if (!q) return 0;
-  if (name === q) return 10000;
-  if (name.startsWith(q)) return 8000 - name.length;
-  if (name.includes(q)) return 6000 - name.indexOf(q);
-  if (remarks.includes(q)) return 2500 - remarks.indexOf(q);
-  if (actor.includes(q)) return 1800 - actor.indexOf(q);
-  if (director.includes(q)) return 1500 - director.indexOf(q);
-  if (content.includes(q)) return 500 - content.indexOf(q);
-  return 0;
+  if (!tokens.length) return 0;
+
+  let score = 0;
+  for (const token of tokens) {
+    score = Math.max(score, scoreTitleToken(name, token));
+    score = Math.max(score, scoreContainsToken(remarks, token, 2600));
+    score = Math.max(score, scoreContainsToken(actor, token, 2200));
+    score = Math.max(score, scoreContainsToken(director, token, 2000));
+    if (token.length >= 3) {
+      score = Math.max(score, scoreContainsToken(content, token, 700));
+    }
+  }
+  return score;
+}
+
+function dedupeListItems(list) {
+  const seen = new Set();
+  const result = [];
+  for (const item of list) {
+    const key = item.vod_id || `${item.vod_name}|${item.vod_pic}`;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+  return result;
+}
+
+function refineSearchList(list, keyword) {
+  return list
+    .map((item, index) => ({ item, index, score: scoreSearchItem(item, keyword) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => {
+      const scoreDiff = b.score - a.score;
+      if (scoreDiff !== 0) return scoreDiff;
+      const nameDiff = a.item.vod_name.localeCompare(b.item.vod_name, "zh-CN");
+      return nameDiff || a.index - b.index;
+    })
+    .map((entry) => entry.item);
+}
+
+async function fetchSearchPage(keyword, page) {
+  const pg = Math.max(1, Number(page || 1) || 1);
+  const producer = () => requestApi("/api/search", { keyword, page: pg }, { timeout: 60000 });
+  try {
+    return await getCachedJson(`hxq:search:${keyword}:${pg}`, SEARCH_CACHE_TTL, producer);
+  } catch (firstErr) {
+    await OmniBox.log("info", `[韩小圈][search] page=${pg} first try failed, retry once: ${firstErr?.message || firstErr}`);
+    return producer();
+  }
+}
+
+async function collectSearchPages(keyword, page) {
+  const targetPage = Math.max(1, Number(page || 1) || 1);
+  const endPage = targetPage + SEARCH_PREFETCH_PAGES - 1;
+  const raw = [];
+  let hasMore = false;
+  let fetchedPages = 0;
+
+  for (let currentPage = 1; currentPage <= endPage; currentPage += 1) {
+    const data = await fetchSearchPage(keyword, currentPage);
+    const items = Array.isArray(data?.data) ? data.data : [];
+    raw.push(...items);
+    fetchedPages = currentPage;
+    hasMore = items.length >= SEARCH_PAGE_SIZE;
+    if (!hasMore) break;
+  }
+
+  return { raw, hasMore, fetchedPages };
 }
 
 function buildVodFromDetail(vod) {
@@ -223,42 +340,40 @@ async function detail(params) {
 
 async function search(params) {
   const keyword = normalizeText(params?.keyword || params?.wd || "");
-  const pg = String(Math.max(1, Number(params?.page || 1)));
+  const pg = Math.max(1, Number(params?.page || 1) || 1);
   if (!keyword) {
     return { page: 1, pagecount: 1, limit: 20, total: 0, list: [] };
   }
 
-  const producer = () => requestApi("/api/search", { keyword, page: pg }, { timeout: 60000 });
   try {
-    let data;
-    try {
-      data = await getCachedJson(`hxq:search:${keyword}:${pg}`, SEARCH_CACHE_TTL, producer);
-    } catch (firstErr) {
-      await OmniBox.log("info", `[韩小圈][search] first try failed, retry once: ${firstErr?.message || firstErr}`);
-      data = await producer();
-    }
-    const raw = Array.isArray(data?.data) ? data.data : [];
-    const list = raw.map(buildListItem).filter((item) => item.vod_id && item.vod_name);
-    list.sort((a, b) => {
-      const scoreDiff = scoreSearchItem(b, keyword) - scoreSearchItem(a, keyword);
-      if (scoreDiff !== 0) return scoreDiff;
-      return a.vod_name.localeCompare(b.vod_name, "zh-CN");
-    });
-    const hasMore = raw.length >= 20;
-    await OmniBox.log("info", `[韩小圈][search] keyword=${keyword} pg=${pg} list=${list.length} top=${list.slice(0, 5).map((item) => item.vod_name).join(" | ")}`);
+    const { raw, hasMore, fetchedPages } = await collectSearchPages(keyword, pg);
+    const allList = dedupeListItems(
+      raw
+        .map(buildListItem)
+        .filter((item) => item.vod_id && item.vod_name),
+    );
+    const refinedList = refineSearchList(allList, keyword);
+    const start = (pg - 1) * SEARCH_PAGE_SIZE;
+    const list = refinedList.slice(start, start + SEARCH_PAGE_SIZE);
+    const knownPageCount = Math.max(1, Math.ceil(refinedList.length / SEARCH_PAGE_SIZE));
+    const pagecount = refinedList.length > 0
+      ? (hasMore ? Math.max(pg + 1, knownPageCount) : Math.max(pg, knownPageCount))
+      : pg;
+    const total = refinedList.length + (hasMore && refinedList.length > 0 ? 1 : 0);
+    await OmniBox.log("info", `[韩小圈][search] keyword=${keyword} pg=${pg} raw=${raw.length} refined=${refinedList.length} list=${list.length} pages=${fetchedPages} top=${list.slice(0, 5).map((item) => item.vod_name).join(" | ")}`);
     return {
-      page: Number(pg),
-      pagecount: hasMore ? Number(pg) + 1 : Number(pg),
-      limit: 20,
-      total: hasMore ? Number(pg) * 20 + 1 : (Number(pg) - 1) * 20 + list.length,
+      page: pg,
+      pagecount,
+      limit: SEARCH_PAGE_SIZE,
+      total,
       list,
     };
   } catch (err) {
     await OmniBox.log("error", `[韩小圈][search] keyword=${keyword} pg=${pg} ${err?.message || err}`);
     return {
-      page: Number(pg),
-      pagecount: Number(pg),
-      limit: 20,
+      page: pg,
+      pagecount: pg,
+      limit: SEARCH_PAGE_SIZE,
       total: 0,
       list: [],
     };
