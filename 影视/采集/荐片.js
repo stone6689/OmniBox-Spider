@@ -1,7 +1,7 @@
 // @name 荐片APP
 // @author 
 // @description 刮削：支持，弹幕：支持，播放记录：支持，嗅探：支持
-// @version 1.1.0
+// @version 1.1.1
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/采集/荐片.js
 /**
  * ============================================================================
@@ -35,7 +35,7 @@ const jpConfig = {
   // 主 API 域名
   host: "https://h5.jianpianips1.com",
   // 图片域名
-  imgHost: "https://img.jgsfnl.com",
+  imgHost: "https://img.ztfgh.com",
   // 请求头
   headers: {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
