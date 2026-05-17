@@ -2,7 +2,7 @@
 // @author OmniBox
 // @description YouTube影视源，支持分组分类、二级筛选、搜索、播放列表与视频播放
 // @dependencies: axios
-// @version 1.0.0
+// @version 1.0.1
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/流媒体/YouTube.js
 
 const axios = require("axios");
@@ -99,7 +99,6 @@ async function searchVideos(query, page = 1, includePlaylists = true, filterSp =
       if (!playlistOnly && obj.videoRenderer) {
         const v = obj.videoRenderer;
         results.push({
-          type: "video",
           vod_id: v.videoId,
           vod_name: v.title?.runs?.[0]?.text || "Unknown",
           vod_pic: v.thumbnail?.thumbnails?.slice(-1)?.[0]?.url || "",
@@ -112,11 +111,10 @@ async function searchVideos(query, page = 1, includePlaylists = true, filterSp =
         const title = obj.playlistRenderer?.title?.simpleText || obj.lockupViewModel?.metadata?.lockupMetadataViewModel?.title?.content || "Unknown";
         if (pId) {
           results.push({
-            type: "playlist",
             vod_id: pId,
             vod_name: title,
             vod_pic: obj.playlistRenderer?.thumbnails?.[0]?.thumbnails?.[0]?.url || obj.lockupViewModel?.contentImage?.collectionThumbnailViewModel?.primaryThumbnail?.thumbnailViewModel?.image?.sources?.[0]?.url || "",
-            vod_remarks: "Playlist",
+            vod_remarks: "播放列表",
           });
         }
       }
@@ -282,10 +280,19 @@ async function category(params = {}) {
   }
 
   const res = await searchVideos(query, page, true, sp || "", playlistOnly, gl, hl);
+
+  const pageNum = typeof page === "string" && page.length > 20 ? 1 : Number(page) || 1;
+
+  logInfo("分类结果样例", {
+    count: res.list.length,
+    hasToken: !!res.token,
+    sample: res.list.slice(0, 2),
+  });
+
   return {
     list: res.list,
-    page: res.token || page,
-    pagecount: res.token ? 999 : 1,
+    page: pageNum,
+    pagecount: res.token ? 999 : pageNum,
     limit: 20,
     total: res.list.length,
   };
@@ -497,10 +504,19 @@ async function search(params = {}) {
   }
 
   const res = await searchVideos(query, page, true, sp || "", playlistOnly, gl, hl);
+
+  const pageNum = typeof page === "string" && page.length > 20 ? 1 : Number(page) || 1;
+
+  logInfo("搜索结果样例", {
+    count: res.list.length,
+    hasToken: !!res.token,
+    sample: res.list.slice(0, 2),
+  });
+
   return {
     list: res.list,
-    page: res.token || page,
-    pagecount: res.token ? 999 : 1,
+    page: pageNum,
+    pagecount: res.token ? 999 : pageNum,
     limit: 20,
     total: res.list.length,
   };
